@@ -1,0 +1,13 @@
+[project]
+name = "gitfleet"
+version = "0.1.0"
+description = "Fast Git project manager and backup tool."
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+gitfleet = "gitfleet.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
