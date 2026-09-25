@@ -32,7 +32,7 @@ The repository also includes `gitfleet.sh` as a convenience launcher.
 
 ## Configuration
 
-Gitfleet reads `config.toml`.
+Gitfleet reads `~/.config/gitfleet/config.toml` by default. If `XDG_CONFIG_HOME` is set, it uses `$XDG_CONFIG_HOME/gitfleet/config.toml`.
 
 ```toml
 [paths]
@@ -53,11 +53,17 @@ The backup destination uses rclone remote syntax.
 
 ## Commands
 
-List the current repository inventory:
+List the current project inventory:
 
 ```bash
-uv run gitfleet list
+gitfleet list
 ```
+
+`list` scans every real direct child directory under `scan_root`, including hidden directories. Symlinks are ignored.
+
+The summary shows the total number of direct directories, Git repositories, and non-Git directories. Non-Git directories are listed separately before the Git repository inventory.
+
+A directory is considered a Git repository when it contains a `.git` directory or `.git` file. A GitHub, GitLab, Codeberg, or other remote is not required. Git inventory numbers remain assigned only to Git repositories.
 
 Show Git metadata for a repository:
 

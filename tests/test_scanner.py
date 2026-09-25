@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from gitfleet.scanner import (
+    discover_direct_directories,
     discover_direct_repositories,
     is_git_repository,
 )
@@ -84,6 +85,62 @@ class ScannerTests(unittest.TestCase):
                 discover_direct_repositories(root),
                 [real],
             )
+
+
+    def test_direct_directories_are_classified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            repo = root / "repo"
+            (repo / ".git").mkdir(parents=True)
+
+            non_git = root / "notes"
+            non_git.mkdir()
+
+            hidden_non_git = root / ".hidden-data"
+            hidden_non_git.mkdir()
+
+            repositories, non_git_directories = (
+                discover_direct_directories(root)
+            )
+
+            self.assertEqual(repositories, [repo])
+            self.assertEqual(
+                non_git_directories,
+                [hidden_non_git, non_git],
+            )
+
+    def test_directory_classification_supports_git_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            worktree = root / "worktree"
+            worktree.mkdir()
+            (worktree / ".git").write_text(
+                "gitdir: /tmp/example\n",
+                encoding="utf-8",
+            )
+
+            repositories, non_git = discover_direct_directories(root)
+
+            self.assertEqual(repositories, [worktree])
+            self.assertEqual(non_git, [])
+
+    def test_directory_classification_ignores_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            real = root / "real"
+            real.mkdir()
+
+            link = root / "linked"
+            link.symlink_to(real, target_is_directory=True)
+
+            repositories, non_git = discover_direct_directories(root)
+
+            self.assertEqual(repositories, [])
+            self.assertEqual(non_git, [real])
+
 
     def test_missing_root_fails(self):
         with self.assertRaises(ValueError):

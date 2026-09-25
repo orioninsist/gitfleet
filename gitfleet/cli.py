@@ -7,6 +7,7 @@ from gitfleet.git import inspect_repository, get_repository_status, update_repos
 from gitfleet.clone import build_clone_plan, execute_clone_plan
 from gitfleet.backup import backup, check_backup_tools
 from gitfleet.config import load_config
+from gitfleet.scanner import discover_direct_directories
 from gitfleet.inventory import (
     get_repositories,
     resolve_repository,
@@ -15,8 +16,23 @@ from gitfleet.inventory import (
 
 
 def command_list(_args: argparse.Namespace) -> int:
-    repositories = get_repositories()
+    config = load_config()
+    root = config["paths"]["scan_root"]
+    repositories, non_git = discover_direct_directories(root)
 
+    print("SUMMARY")
+    print(f"TOTAL DIRECTORIES : {len(repositories) + len(non_git)}")
+    print(f"GIT REPOSITORIES  : {len(repositories)}")
+    print(f"NON-GIT           : {len(non_git)}")
+
+    if non_git:
+        print()
+        print("NON-GIT DIRECTORIES")
+        for path in non_git:
+            print(f"- {path.name}")
+
+    print()
+    print("GIT REPOSITORIES")
     for number, path in enumerate(repositories, start=1):
         print(f"{number:>3}. {path.name}")
 

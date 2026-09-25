@@ -13,23 +13,38 @@ class CliTests(unittest.TestCase):
             Path("/tmp/alpha"),
             Path("/tmp/beta"),
         ]
+        non_git = [
+            Path("/tmp/.hidden-data"),
+            Path("/tmp/notes"),
+        ]
 
         output = io.StringIO()
 
         with (
             patch(
-                "gitfleet.cli.get_repositories",
-                return_value=repositories,
+                "gitfleet.cli.load_config",
+                return_value={"paths": {"scan_root": "/tmp"}},
+            ),
+            patch(
+                "gitfleet.cli.discover_direct_directories",
+                return_value=(repositories, non_git),
             ),
             patch("sys.argv", ["gitfleet", "list"]),
             redirect_stdout(output),
         ):
             result = main()
 
+        value = output.getvalue()
+
         self.assertEqual(result, 0)
-        self.assertIn("1. alpha", output.getvalue())
-        self.assertIn("2. beta", output.getvalue())
-        self.assertIn("Total: 2", output.getvalue())
+        self.assertIn("TOTAL DIRECTORIES : 4", value)
+        self.assertIn("GIT REPOSITORIES  : 2", value)
+        self.assertIn("NON-GIT           : 2", value)
+        self.assertIn("- .hidden-data", value)
+        self.assertIn("- notes", value)
+        self.assertIn("1. alpha", value)
+        self.assertIn("2. beta", value)
+        self.assertIn("Total: 2", value)
 
     def test_invalid_show_number(self):
         with (
