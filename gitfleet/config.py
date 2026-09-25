@@ -1,13 +1,18 @@
+import os
 from pathlib import Path
 import tomllib
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_CONFIG = PROJECT_ROOT / "config.toml"
+def default_config_path() -> Path:
+    config_home = Path(
+        os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
+    ).expanduser()
+
+    return config_home / "gitfleet" / "config.toml"
 
 
-def load_config(path: Path = DEFAULT_CONFIG) -> dict:
-    path = Path(path)
+def load_config(path: Path | None = None) -> dict:
+    path = default_config_path() if path is None else Path(path).expanduser()
 
     if not path.is_file():
         raise FileNotFoundError(f"Config bulunamadi: {path}")
