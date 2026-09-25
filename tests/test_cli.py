@@ -73,6 +73,123 @@ class CliTests(unittest.TestCase):
         run.assert_not_called()
 
 
+    def test_status_all_focuses_on_local_work(self):
+        from gitfleet.git import RepositoryStatus
+
+        repositories = [
+            Path("/tmp/dirty"),
+            Path("/tmp/push"),
+            Path("/tmp/diverged"),
+            Path("/tmp/behind-only"),
+            Path("/tmp/no-upstream"),
+            Path("/tmp/fetch-failed"),
+            Path("/tmp/clean"),
+        ]
+
+        statuses = {
+            "dirty": RepositoryStatus(
+                dirty=True,
+                ahead=0,
+                behind=3,
+                state="UPDATE AVAILABLE",
+                fetch_ok=True,
+                fetch_error=None,
+            ),
+            "push": RepositoryStatus(
+                dirty=False,
+                ahead=2,
+                behind=0,
+                state="PUSH NEEDED",
+                fetch_ok=True,
+                fetch_error=None,
+            ),
+            "diverged": RepositoryStatus(
+                dirty=False,
+                ahead=1,
+                behind=4,
+                state="DIVERGED",
+                fetch_ok=True,
+                fetch_error=None,
+            ),
+            "behind-only": RepositoryStatus(
+                dirty=False,
+                ahead=0,
+                behind=5,
+                state="UPDATE AVAILABLE",
+                fetch_ok=True,
+                fetch_error=None,
+            ),
+            "no-upstream": RepositoryStatus(
+                dirty=False,
+                ahead=None,
+                behind=None,
+                state="NO UPSTREAM",
+                fetch_ok=True,
+                fetch_error=None,
+            ),
+            "fetch-failed": RepositoryStatus(
+                dirty=False,
+                ahead=0,
+                behind=0,
+                state="UP TO DATE",
+                fetch_ok=False,
+                fetch_error="timeout",
+            ),
+            "clean": RepositoryStatus(
+                dirty=False,
+                ahead=0,
+                behind=0,
+                state="UP TO DATE",
+                fetch_ok=True,
+                fetch_error=None,
+            ),
+        }
+
+        def fake_status(repo, *, fetch=True):
+            return statuses[repo.name], None
+
+        output = io.StringIO()
+
+        with (
+            patch(
+                "gitfleet.cli.get_repositories",
+                return_value=repositories,
+            ),
+            patch(
+                "gitfleet.cli._isolated_repository_status",
+                side_effect=fake_status,
+            ),
+            patch(
+                "sys.argv",
+                ["gitfleet", "status", "--all"],
+            ),
+            redirect_stdout(output),
+        ):
+            result = main()
+
+        value = output.getvalue()
+
+        self.assertEqual(result, 0)
+        self.assertIn("TOTAL REPOSITORIES : 7", value)
+        self.assertIn("NEEDS ATTENTION    : 5", value)
+        self.assertIn("UNCOMMITTED        : 1", value)
+        self.assertIn("NEEDS PUSH         : 1", value)
+        self.assertIn("DIVERGED LOCAL     : 1", value)
+        self.assertIn("NO UPSTREAM        : 1", value)
+        self.assertIn("FETCH FAILED       : 1", value)
+
+        self.assertIn("dirty: DIRTY", value)
+        self.assertNotIn("behind 3", value)
+
+        self.assertIn("push: PUSH NEEDED (ahead 2)", value)
+        self.assertIn("diverged: DIVERGED (ahead 1)", value)
+        self.assertIn("no-upstream: NO UPSTREAM", value)
+        self.assertIn("fetch-failed: FETCH FAILED", value)
+
+        self.assertNotIn("behind-only:", value)
+        self.assertNotIn("clean:", value)
+
+
 if __name__ == "__main__":
     unittest.main()
 

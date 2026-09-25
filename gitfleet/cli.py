@@ -1,7 +1,11 @@
 import argparse
+import multiprocessing
+import os
+import signal
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from gitfleet.git import inspect_repository, get_repository_status, update_repository, push_repository
 from gitfleet.clone import build_clone_plan, execute_clone_plan
@@ -84,7 +88,174 @@ def command_report(args: argparse.Namespace) -> int:
 
 
 
+def _status_worker(path: str, fetch: bool, queue) -> None:
+    os.setsid()
+
+    try:
+        status = get_repository_status(
+            Path(path),
+            fetch=fetch,
+        )
+        queue.put(("OK", status))
+    except BaseException as error:
+        queue.put(
+            (
+                "ERROR",
+                f"{type(error).__name__}: {error}",
+            )
+        )
+
+
+def _isolated_repository_status(
+    path: Path,
+    *,
+    fetch: bool,
+    timeout: float = 10.0,
+):
+    context = multiprocessing.get_context("fork")
+    queue = context.Queue()
+
+    process = context.Process(
+        target=_status_worker,
+        args=(str(path), fetch, queue),
+    )
+    process.start()
+    process.join(timeout)
+
+    if process.is_alive():
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+        process.join()
+
+        queue.close()
+        queue.join_thread()
+        return None, "TIMEOUT"
+
+    try:
+        kind, value = queue.get_nowait()
+    except Exception:
+        kind = "ERROR"
+        value = f"worker exited with code {process.exitcode}"
+    finally:
+        queue.close()
+        queue.join_thread()
+
+    if kind == "OK":
+        return value, None
+
+    return None, value
+
+
 def command_status(args: argparse.Namespace) -> int:
+    if args.all:
+        repositories = get_repositories()
+        attention = []
+
+        counts = {
+            "PUSH NEEDED": 0,
+            "DIRTY": 0,
+            "DIVERGED": 0,
+            "NO UPSTREAM": 0,
+            "FETCH FAILED": 0,
+        }
+
+        total = len(repositories)
+
+        for number, path in enumerate(repositories, start=1):
+            print(
+                f"\rChecking: {number}/{total}",
+                end="",
+                flush=True,
+            )
+
+            status, worker_error = _isolated_repository_status(
+                path,
+                fetch=not args.no_fetch,
+            )
+
+            if status is None:
+                counts["FETCH FAILED"] += 1
+                attention.append(
+                    (
+                        number,
+                        path.name,
+                        None,
+                        [
+                            "FETCH TIMEOUT"
+                            if worker_error == "TIMEOUT"
+                            else "CHECK FAILED"
+                        ],
+                    )
+                )
+                continue
+
+            reasons = []
+
+            if status.dirty:
+                counts["DIRTY"] += 1
+                reasons.append("DIRTY")
+
+            if not status.fetch_ok:
+                counts["FETCH FAILED"] += 1
+                reasons.append("FETCH FAILED")
+            elif status.state == "PUSH NEEDED":
+                counts["PUSH NEEDED"] += 1
+                reasons.append("PUSH NEEDED")
+            elif status.state == "DIVERGED" and status.ahead:
+                counts["DIVERGED"] += 1
+                reasons.append("DIVERGED")
+            elif status.state == "NO UPSTREAM":
+                counts["NO UPSTREAM"] += 1
+                reasons.append("NO UPSTREAM")
+
+            if reasons:
+                attention.append(
+                    (
+                        number,
+                        path.name,
+                        status,
+                        reasons,
+                    )
+                )
+
+        print("\r" + (" " * 50) + "\r", end="", flush=True)
+
+        print("LOCAL WORK SUMMARY")
+        print(f"TOTAL REPOSITORIES : {len(repositories)}")
+        print(f"NEEDS ATTENTION    : {len(attention)}")
+        print(f"UNCOMMITTED        : {counts['DIRTY']}")
+        print(f"NEEDS PUSH         : {counts['PUSH NEEDED']}")
+        print(f"DIVERGED LOCAL     : {counts['DIVERGED']}")
+        print(f"NO UPSTREAM        : {counts['NO UPSTREAM']}")
+        print(f"FETCH FAILED       : {counts['FETCH FAILED']}")
+
+        if attention:
+            print()
+            print("NEEDS ATTENTION")
+
+            for number, name, status, reasons in attention:
+                details = []
+
+                if status is not None and status.ahead:
+                    details.append(f"ahead {status.ahead}")
+
+                suffix = ""
+                if details:
+                    suffix = f" ({', '.join(details)})"
+
+                print(
+                    f"{number:>3}. {name}: "
+                    f"{', '.join(reasons)}{suffix}"
+                )
+        else:
+            print()
+            print("No uncommitted or unpushed local work found.")
+
+        return 0
+
     path = resolve_repository(args.number)
     info = inspect_repository(path)
 
@@ -117,7 +288,6 @@ def command_status(args: argparse.Namespace) -> int:
         print(f"FETCH ERROR: {status.fetch_error}")
 
     return 0 if status.fetch_ok else 1
-
 
 def command_update(args: argparse.Namespace) -> int:
     path = resolve_repository(args.number)
@@ -369,10 +539,19 @@ def build_parser() -> argparse.ArgumentParser:
         "status",
         help="Check one project's local and remote status.",
     )
-    status_parser.add_argument(
+    status_target = status_parser.add_mutually_exclusive_group(
+        required=True,
+    )
+    status_target.add_argument(
         "number",
         type=int,
+        nargs="?",
         help="Project number.",
+    )
+    status_target.add_argument(
+        "--all",
+        action="store_true",
+        help="Check all projects and report repositories needing attention.",
     )
     status_parser.add_argument(
         "--no-fetch",

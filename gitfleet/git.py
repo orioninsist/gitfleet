@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
+import os
+import signal
 import subprocess
 from urllib.parse import urlparse
 
@@ -116,6 +118,7 @@ def get_repository_status(
     path: Path,
     *,
     fetch: bool = True,
+    fetch_timeout: float = 20.0,
 ) -> RepositoryStatus:
     path = Path(path).resolve()
 
@@ -123,24 +126,46 @@ def get_repository_status(
     fetch_error = None
 
     if fetch:
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(path),
-                "fetch",
-                "--prune",
-                "--quiet",
-            ],
+        command = [
+            "git",
+            "-C",
+            str(path),
+            "fetch",
+            "--prune",
+            "--quiet",
+        ]
+
+        process = subprocess.Popen(
+            command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            check=False,
+            start_new_session=True,
         )
 
-        if result.returncode != 0:
+        try:
+            _, stderr = process.communicate(
+                timeout=fetch_timeout,
+            )
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(
+                    os.getpgid(process.pid),
+                    signal.SIGKILL,
+                )
+            except ProcessLookupError:
+                pass
+
+            process.communicate()
+
             fetch_ok = False
-            fetch_error = result.stderr.strip() or "git fetch failed"
+            fetch_error = (
+                f"git fetch timed out after {fetch_timeout:g} seconds"
+            )
+        else:
+            if process.returncode != 0:
+                fetch_ok = False
+                fetch_error = stderr.strip() or "git fetch failed"
 
     porcelain = run_git(
         path,
